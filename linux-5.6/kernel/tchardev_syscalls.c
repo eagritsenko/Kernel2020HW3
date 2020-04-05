@@ -126,7 +126,7 @@ size_t send_to_tchardev(const char *usrspace_str, size_t length){
        fs = get_fs();
        set_fs(KERNEL_DS);
        file = filp_open("/dev/tchardev", O_WRONLY, 0);
-       if(!(file && !vfs_write(file, usrspace_str, length, &pos)))
+       if(!(file && vfs_write(file, usrspace_str, length, &pos) < 0))
                status = -16;
        filp_close(file, NULL);
        set_fs(fs);
@@ -141,7 +141,7 @@ size_t read_from_tchardev(char *to, size_t length){
        fs = get_fs();
        set_fs(KERNEL_DS);
        file = filp_open("/dev/tchardev", O_RDONLY, 0);
-       if(!(file && !vfs_read(file, to, length, &pos)))
+       if(!(file && vfs_read(file, to, length, &pos) < 0))
                  status = -17;
        filp_close(file, NULL);
        set_fs(fs);
