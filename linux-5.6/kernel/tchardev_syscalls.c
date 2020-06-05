@@ -1,150 +1,76 @@
 #include<linux/fs.h>
 #include<asm/uaccess.h>
 #include<linux/slab.h>
-#include<linux/vmalloc.h>
 #include<linux/string.h>
 #include<linux/syscalls.h>
+#include<linux/err.h>
 
 #define MAX_ARG_LENGTH 64
+#define MAX_ARG_LENGTH_Z (MAX_ARG_LENGTH + 1)
 
 struct user_entry{
-	char *surname;
-	char *name;
-	char *phone_number;
-	char *email;
+	char surname[MAX_ARG_LENGTH_Z];
+	char name[MAX_ARG_LENGTH_Z];
+	char phone_number[MAX_ARG_LENGTH_Z];
+	char email[MAX_ARG_LENGTH_Z];
 };
 
-struct list_node{
-	const char *value;
-	size_t length;
-	struct list_node *next;
-	int is_our_str : 1;
-};
-
-size_t get_arg_size(const char *arg){
+ssize_t get_arg_size(const char *arg){
     size_t result;
 	if(arg == NULL)
 		return -1; // arg is null
-	result = strnlen_user(arg, MAX_ARG_LENGTH + 1); // + 1 since null-char is inclusive
+	result = strnlen_user(arg, MAX_ARG_LENGTH + 1);
 	if(result < 2 || result > MAX_ARG_LENGTH + 1)
-		return -2; // arg is out of valid length range
+		return -1;
 	return result;
 }
 
-struct list_node *node_usr_with_length(const char *from, size_t length){
-	struct list_node *node = kmalloc(sizeof(struct list_node), GFP_KERNEL);
-	if(!node)
-		return NULL;
-	node->value = from;
-	node->length = length;
-	node->next = NULL;
-	node->is_our_str = 0;
-        return node;
-}
-
-struct list_node *node_usr(const char *from){
-	struct list_node *node;
-	size_t len = get_arg_size(from);
-    if(len < 0)
-    	return NULL;
-    node = kmalloc(sizeof(struct list_node), GFP_KERNEL);
-	if(!node)
-		return NULL;
-	node->value = from;
-	node->length = len;
-	node->next = NULL;
-	node->is_our_str = 0;
-        return node;
-}
-
-struct list_node *node_from_krnl_str(char *from){
-	struct list_node *node = kmalloc(sizeof(struct list_node), GFP_KERNEL);
-	char *str;
-	if(!node)
-		goto exit;
-	node->length = strlen(from);
-	str = vmalloc_user(node->length);
-	if(!node->value)
-		goto error_on_vmalloc;
-	if(copy_to_user(str, from, node->length))
-		goto error_on_copy;
-	node->value = str;
-	node->next = NULL;
-	node->is_our_str = 1;
-	return node;
-
-	error_on_copy:
-	vfree(node->value);
-	error_on_vmalloc:
-	kfree(node);
-	exit:
-	return NULL;
-}
-
-void free_node_list(struct list_node *first){
-	struct list_node *cur = first, *next;
-	while(cur){
-		if(cur->is_our_str)
-			vfree(cur->value);
-		next = cur;
-		vfree(cur);
-		cur = next;
-	}
-}
-
-char *build_string(struct list_node *first, size_t length){
-	struct list_node *cur = first;
-	char *str = vmalloc_user(length);
-	long status = 0;
-	size_t i = 0;
-	if(!str || !cur)
-		return NULL;
-	while(cur->next){
-		status = copy_to_user(str + i, cur->value, cur->length - 1);
-		if(status)
-			goto error_on_copy;
-		i += cur->length - 1;
-		cur = cur->next;
-	}
-	if(cur){
-		status = copy_to_user(str + i, cur->value, cur->length);
-		if(status)
-			goto error_on_copy;
-	}
-	return str;
-
-	error_on_copy:
-	vfree(str);
-	return NULL;
-}
-
-size_t send_to_tchardev(const char *usrspace_str, size_t length){
+int send_to_tchardev(const char *usrspace_str, size_t length){
        struct file *file;
        mm_segment_t fs;
        loff_t pos = 0;
-       size_t status = 0;
+       int status = 0;
        fs = get_fs();
        set_fs(KERNEL_DS);
        file = filp_open("/dev/tchardev", O_WRONLY, 0);
-       if(!(file && vfs_write(file, usrspace_str, length, &pos) < 0))
-               status = -16;
-       filp_close(file, NULL);
+       if(IS_ERR(file))
+            printk(KERN_ERR "Error opening file!");
+       else
+            printk(KERN_DEBUG "File opening is OK");
+       if(IS_ERR(file) || vfs_write(file, usrspace_str, length, &pos) < 0)
+            status = -16;
+       if(!IS_ERR(file)){
+            filp_close(file, NULL);
+            printk(KERN_DEBUG "File close OK");
+       }
        set_fs(fs);
+       printk(KERN_DEBUG "Status is %d", status);
        return status;
 }
 
-size_t read_from_tchardev(char *to, size_t length){
+
+int read_from_tchardev(char *to, size_t length){
        struct file *file;
        mm_segment_t fs;
        loff_t pos = 0;
-       size_t status = 0;
+       int status = 0;
        fs = get_fs();
        set_fs(KERNEL_DS);
        file = filp_open("/dev/tchardev", O_RDONLY, 0);
-       if(!(file && vfs_read(file, to, length, &pos) < 0))
-                 status = -17;
-       filp_close(file, NULL);
+       if(IS_ERR(file))
+            printk(KERN_ERR "Error opening file!");
+       else
+            printk(KERN_DEBUG "File opening is OK");
+
+       if(IS_ERR(file) || vfs_read(file, to, length, &pos) < 0)
+            status = -17;
+       if(!IS_ERR(file)){
+            printk(KERN_DEBUG "File closing commenced");
+            filp_close(file, NULL);
+            printk(KERN_DEBUG "File close OK");
+       }
        set_fs(fs);
+       printk(KERN_DEBUG "Status is %d", status);
        return status;
 }
 
@@ -152,275 +78,238 @@ int valid_entry(struct user_entry *entry){
 	return entry->surname == NULL || entry->name == NULL;
 }
 
-size_t parse_user_entry(struct user_entry **at, const char *k_str, size_t buffer_length){
-	struct user_entry *entry;
-	size_t i = 0;
-	size_t value_begin = 0;
-	char prefix[] = {'S', 'N', 'E', 'T'};
-	char tab[] = {8, 6, 7, 13};
-	int j = 0, a = 0, error = -8;
+int parse_user_entry(struct user_entry *at_usr, char *k_str, size_t buffer_length){
+	char prefix[] = {'S', 'N', 'P', 'E'};
+	char offset[] = {8, 6, 13, 7}; // offsets of printed payload
+	int i = 0, j = 0, a = 0, value_begin = 0;
 	void *jump = &&read_prefix;
+
+    printk(KERN_DEBUG "-> Parsing state: \n%s", k_str);
 	// if k_str starts with "[Error.X]"
-	if(k_str[0] == '[' && k_str[1] == 'E'){
-		*at = NULL;
-		return k_str[7];
-	}
-	entry = kzalloc(sizeof(struct user_entry), GFP_KERNEL);
+	if(k_str[0] == '[' && k_str[1] == 'E')
+		return k_str[7]; // 7 is error code position
+
+    printk(KERN_DEBUG "-> Parsing. Parsing entry.\n");
+
 	for(; i < buffer_length; i++){
 		goto *jump;
+
 		read_prefix:
+        printk(KERN_DEBUG "-> Parsing. At %d. Reading prefix.\n", i);
 		for(; j < 4; j++){
-			if(prefix[j] == k_str[i]){
+			if(k_str[i] == prefix[j]){
 				a = j;
+				j = 0;
 				break;
 			}
 		}
-		if(j == 4)
-			goto format_error;
-		value_begin += tab[a] + 1;
-		i += tab[a];
+		if(j == 4) // if uncknown prefix it's either exit or format error
+            return k_str[i] == '\0' ? 0 : -7;
+
+		value_begin = i + offset[a] + 1;
+		i += offset[a];
+		printk(KERN_DEBUG "-> Parsing. At %d. Prefix is %d. Value begin is %d\n.", i, a, value_begin);
 		jump = &&read_value;
 		continue;
 
 		read_value:
+        printk(KERN_DEBUG "-> Parsing. At %d. Reading value.\n", i);
 		if(k_str[i] == '\n' || k_str[i] == '\0')
 		{
-			vfree((char **)entry + a);
-			((char **)entry)[a] = vmalloc(i - value_begin + 1);
-			if(!((char **)entry)[a])
-				goto memory_error;
-			copy_to_user(((char **)entry)[a], k_str + value_begin, i - value_begin);
-			put_user('\0', ((char **)entry)[a] + i - value_begin);
-			jump = &&read_prefix;
+                        int struct_offset = MAX_ARG_LENGTH_Z * a;
+                        printk(KERN_DEBUG "-> Parsing. At %d. Terminator caught.\n", i);
+			printk(KERN_DEBUG "-> Parsing. At %d. Copying %d bytes from %d.\n", i, i - value_begin, value_begin);
+            if(copy_to_user((char *)at_usr + struct_offset, k_str + value_begin, i - value_begin))
+                return -17;
 			if(k_str[i] == '\0')
 				break;
+            jump = &&read_prefix;
 		}
 		continue;
 	}
-	if(valid_entry(entry))
-	{
-		*at = entry;
-		return 0;
-	}
-
-format_error:
-	error = -17;
-memory_error:
-	for(j = 0; j < 4; j++)
-		vfree(((char **)entry)[j]);
-	kfree(entry);
-	*at = NULL;
-	return error;
+	return 0;
 }
 
-void free_vstr_entry(struct user_entry *entry){
-	if(entry){
-		vfree(entry->surname);
-		vfree(entry->name);
-		vfree(entry->phone_number);
-		vfree(entry->email);
-		kfree(entry);
-	}
+char *build_get_str(const char *usr_surname, const char *usr_name, size_t *length){
+    size_t result_length = 0;
+    char *result, *curstr;
+    ssize_t name_size = get_arg_size(usr_name);
+	ssize_t surname_size = get_arg_size(usr_surname);
+	if(surname_size < 0 || name_size < 0)
+        return NULL;
+
+    result_length = 6 + surname_size; // 6 is lengthof("-g -s ") withought leading 0
+    result_length += 3 + name_size; // 3 is lengthof("-n ") withought leading 0
+
+    *length = result_length;
+    result = kmalloc(result_length, GFP_USER);
+    curstr = result;
+
+    strcpy(curstr, "-g -s ");
+
+    curstr += 6;
+    if(copy_from_user(curstr, usr_surname, surname_size))
+        goto copy_error;
+    if(name_size < 0)
+        return result;
+
+    curstr += surname_size - 1;
+    strcpy(curstr, " -n ");
+    curstr += 4;
+    if(copy_from_user(curstr, usr_name, name_size))
+        goto copy_error;
+    return result;
+    copy_error:
+        printk(KERN_ERR "-> String building. Copy error\n.");
+        kfree(result);
+        return NULL;
+}
+
+int get_subentry_len(char *which){
+    char *end = strnchr(which, MAX_ARG_LENGTH_Z, 0);
+    return end ? end - ((char *)which) : 0; // leading zero is excluded
+}
+
+char *build_insert_str(struct user_entry *k_entry, size_t *length){
+    int surname_size, name_size, pnumber_size, email_size;
+    size_t result_length = 10; // 10 is length of "-i -s  -n "whithought leading zero
+    char *result, *curstr;
+    surname_size = get_subentry_len(k_entry->surname);
+    printk(KERN_DEBUG "-> String building. Surname size: %d\n", surname_size);
+    if(surname_size == 0)
+        return NULL;
+    result_length += surname_size;
+
+    name_size = get_subentry_len(k_entry->name);
+    printk(KERN_DEBUG "-> String building. Name size: %d\n", name_size);
+    if(name_size == 0)
+        return NULL;
+    result_length += name_size;
+
+    pnumber_size = get_subentry_len(k_entry->phone_number);
+    printk(KERN_DEBUG "-> String building. Phone number size: %d\n", pnumber_size);
+    if(pnumber_size)
+        result_length += 4 + pnumber_size;
+
+    email_size = get_subentry_len(k_entry->email);
+    printk(KERN_DEBUG "-> String building. Email size: %d\n", email_size);
+    if(email_size)
+        result_length += 4 + email_size;
+
+    result_length++; // add leading zero
+    *length = result_length;
+    result = kmalloc(result_length, GFP_USER);
+    curstr = result;
+    strcpy(curstr, "-i -s ");
+    curstr += 6;
+    strcpy(curstr, k_entry->surname);
+    curstr += surname_size;
+    strcpy(curstr, " -n ");
+    curstr += 4;
+    strcpy(curstr, k_entry->name);
+    curstr += name_size;
+    if(pnumber_size){
+        strcpy(curstr, " -t ");
+        curstr += 4;
+        strcpy(curstr, k_entry->phone_number);
+        curstr += pnumber_size;
+    }
+    if(email_size){
+        strcpy(curstr, " -e ");
+        curstr += 4;
+        strcpy(curstr, k_entry->email);
+        curstr += email_size;
+    }
+    *curstr = 0;
+    return result;
 }
 
 SYSCALL_DEFINE3(get_user, struct user_entry*, at, const char *, surname, const char *, name){
-	struct user_entry *inner_entry;
-	size_t name_size = get_arg_size(surname);
-	size_t surname_size = get_arg_size(name);
 	size_t length = 0;
-	size_t state = 0;
-	struct list_node *first, *cur;
+	long state = 0;
 	char *str;
-	// begin initialising list
-	if(surname_size < 0 || name_size < 0)
-		return -1; // unspecified surname or name
-	first = node_from_krnl_str("-g -s ");
-	if(!first)
-		return -8; // memory error
-	cur = first;
-	length += cur->length - 1;
-	cur->next = node_usr_with_length(surname, surname_size);
-	if(!cur->next){
-		free_node_list(first);
+
+    str = build_get_str(surname, name, &length);
+	if(!str)
 		return -8;
-	}
-	cur = cur->next;
-	length += cur->length - 1;
-	cur->next = node_from_krnl_str(" -n ");
-	if(!cur->next){
-		free_node_list(first);
-		return -8;
-	}
-	cur->next->length += cur->length - 1;
-	cur = cur->next;
-	length += cur->length - 1;
-	cur->next = node_usr_with_length(name, name_size);
-	if(!cur->next){
-		free_node_list(first);
-		return -8;
-	}
-	length += cur->length;
-	cur = cur->next;
-	// end initialising list
-	str = build_string(first, length);
-	if(!str){
-		free_node_list(first);
-		return -8;
-	}
-	if(send_to_tchardev(str, length)){
-		vfree(str);
-		free_node_list(first);
+
+    state = send_to_tchardev(str, length);
+    kfree(str);
+	if(state)
 		return -16; // sending error
-	}
-	vfree(str);
-	free_node_list(first);
+
 	str = kzalloc(MAX_ARG_LENGTH * 8, GFP_USER);
 	if(!str)
 		return -8;
-	if(read_from_tchardev(str, MAX_ARG_LENGTH * 8)){
-		vfree(str);
-		return -17; // reading error
-	}
-	state = parse_user_entry(&inner_entry, str, MAX_ARG_LENGTH * 8);
+
+    state = read_from_tchardev(str, MAX_ARG_LENGTH * 8);
+	if(state)
+		state =  -17; // reading error
+	else
+        state = parse_user_entry(at, str, MAX_ARG_LENGTH * 8);
 	kfree(str);
-	if(state)
-		return state;
-	state = copy_to_user(at, inner_entry, sizeof(struct user_entry));
-	if(state)
-		free_vstr_entry(inner_entry);
 	return state;
 }
 
 SYSCALL_DEFINE1(insert_user, struct user_entry *, entry){
-    char surname_prefix[] = " -s ";
-    char name_prefix[] = " -n ";
-    char phone_number_prefix[] = " -t ";
-    char email_prefix[] = " -e ";
-    char *prefices[4];
-    char *str;
-	struct list_node *first, *cur;
-	struct user_entry inner;
-	size_t state = 0;
+	struct user_entry k_entry;
 	size_t length = 0;
-	int j = 0;
-    prefices[0] = surname_prefix;
-    prefices[1] = name_prefix;
-    prefices[2] = phone_number_prefix;
-    prefices[3] = email_prefix;
-	state = copy_from_user(&inner, entry, sizeof(struct user_entry));
+	long state = 0;
+	char *str;
+	state = copy_from_user(&k_entry, entry, sizeof(struct user_entry));
 	if(state)
 		return -8;
-	if(!valid_entry(&inner))
-		return -1;
-	first = node_from_krnl_str("-i");
-    if(!first)
-    	return -8;
-    length += first->length;
-    cur = first;
-    for(j = 0; j < 4; j++){
-        if(((char **)&inner)[j] || j < 2){
-        	cur->next = node_from_krnl_str(prefices[j]);
-            cur = cur->next;
-            if(!cur){
-            	free_node_list(first);
-                return -8;
-            }
-            length += cur->length - 1;
-            cur->next = node_usr(((char **)&inner)[j]);
-            cur = cur->next;
-            if(!cur){
-            	free_node_list(first);
-                return -8;
-            }
-            length += cur->length - 1;
-        }
-    }
-    str = build_string(first, length);
-    if(!str){
-    	free_node_list(first);
-        vfree(str);
-    }
-    if(send_to_tchardev(str, length)){
-    	vfree(str);
-    	free_node_list(first);
+
+    str = build_insert_str(&k_entry, &length);
+    if(!str)
+        return -8;
+
+    state = send_to_tchardev(str, length);
+    kfree(str);
+    if(state){
     	return -16; // sending error
-	}
-	vfree(str);
-	free_node_list(first);
+    }
+
 	str = kzalloc(64, GFP_USER);
 	if(!str)
 		return -8;
+
 	if(read_from_tchardev(str, 64))
 		state = -17;
-
-    if(str[0] == '[' && str[1] == 'O')
-    	state = 0;
-    else
-    	state = str[7] > 0 ? str[7] : -17;
+    else if(str[0] == '[' && str[1] == 'O') // if response string starts with [OK.X]
+    	state =  0;
+    else // otherwise, try reading the error code in [7]
+    	state = str[7] >= 0 ? str[7] : -17;
     kfree(str);
-        return state;
+    return state;
 }
 
 SYSCALL_DEFINE2(del_user, char *, surname, char *, name){
-	size_t name_size = get_arg_size(surname);
-	size_t surname_size = get_arg_size(name);
 	size_t length = 0;
-	size_t state = 0;
-	struct list_node *first, *cur;
+	long state = 0;
 	char *str;
-	// begin initialising list
-	if(surname_size < 0 || name_size < 0)
-		return -1; // unspecified surname or name
-	first = node_from_krnl_str("-d -s ");
-	if(!first)
-		return -8; // memory error
-	cur = first;
-	length += cur->length - 1;
-	cur->next = node_usr_with_length(surname, surname_size);
-	if(!cur->next){
-		free_node_list(first);
-		return -8; // memory error
-	}
-	cur = cur->next;
-	length += cur->length - 1;
-	cur->next = node_from_krnl_str(" -n ");
-	if(!cur->next){
-		free_node_list(first);
-		return -8;
-	}
-	cur->next->length += cur->length - 1;
-	cur = cur->next;
-	length += cur->length - 1;
-	cur->next = node_usr_with_length(name, name_size);
-	if(cur->next){
-		free_node_list(first);
-		return -8;
-	}
-	length += cur->length;
-	cur = cur->next;
-	// end initialising list
-	str = build_string(first, length);
-	if(!str){
-		free_node_list(first);
-		return -8;
-	}
-	if(send_to_tchardev(str, length)){
-		vfree(str);
-		free_node_list(first);
-		return -16; // sending error
-	}
-	vfree(str);
-	free_node_list(first);
-        str = kzalloc(64, GFP_USER);
+
+    str = build_get_str(surname, name, &length);
 	if(!str)
 		return -8;
-	if(read_from_tchardev(str, 64))
-            state = -17;
+    // change "-g -s " get request prefix to "-d -s " prefix of delete request
+    str[1] = 'd';
 
-        if(str[0] == '[' && str[1] == 'O')
-             state = 0;
-        else
-             state = str[7] > 0 ? str[7] : -17;
-        kfree(str);
-        return state;
+    state = send_to_tchardev(str, length);
+    kfree(str);
+	if(state)
+		return -16; // sending error
+
+    str = kzalloc(64, GFP_USER);
+	if(!str)
+		return -8;
+
+    if(read_from_tchardev(str, 64))
+		state = -17;
+    else if(str[0] == '[' && str[1] == 'O') // if response string starts with [OK.X]
+    	state =  0;
+    else // otherwise, try reading the error code in [7]
+    	state = str[7] >= 0 ? str[7] : -17;
+    kfree(str);
+    return state;
 }
