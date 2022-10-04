@@ -1,4 +1,6 @@
-While linux-5.6 was intitialy used building it, yet for 5.6.15 works fine just as well.
+Doesn't work with the newer kernels.
+Used to work with linux-5.6.
+
 Syscall definitions were changed to match those of the first task.
 Getting multiple user entries is unsupported. Deliting multiple user entries is impossible as well.
 
@@ -7,6 +9,6 @@ For the syscalls to work properly:
 -   it should be made accessible at path /dev/tchardev.
 Otherwise, error codes are returned.
 
-A program is provided to test the syscalls of running kernel.
-It's source code is testsyscalls.c file.
-It's arguments (-g, -i, -d, et cetera) correspond to those of the character device.
+A program is provided to test the syscalls of the running kernel.
+Its source code is testsyscalls.c file.
+Its arguments (-g, -i, -d, et cetera) correspond to those of the character device.
